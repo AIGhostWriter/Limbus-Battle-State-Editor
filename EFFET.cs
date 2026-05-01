@@ -1,34 +1,56 @@
-// LimbusInjector (ver.2.0.0)
+// LimbusInjector (ver.2.1.0)
 // F8 to toggle panel
 // Tabs: Buff | Ability
 // Multi-unit selection via checkboxes
 // Category filter: Sys / Canto I~IX / Mirror Dungeon / E.G.O / Shin / Boss
 // All buff names in English
+//
+// [2.1.0] Persistent buff system:
+//   Stack [효과 수치] / Turn [효과 횟수] / Persist [지속할 턴]
+//   Persist=0 → 기존 1회 부여
+//   Persist=N → 즉시 부여 후, 매 라운드 시작마다 N회 재부여
 
 using BepInEx;
 using BepInEx.Unity.IL2CPP;
 using BepInEx.Logging;
+using HarmonyLib;
 using UnityEngine;
 using System;
 using System.Collections.Generic;
+using System.Reflection;
 
 namespace LimbusInjector
 {
-    [BepInPlugin("com.mod.limbusinjector", "LimbusInjector", "2.0.0")]
+    [BepInPlugin("com.mod.limbusinjector", "LimbusInjector", "2.1.0")]
     public class LimbusInjectorPlugin : BasePlugin
     {
         internal static new ManualLogSource? Log;
         public override void Load()
         {
             Log = base.Log;
-            Log.LogInfo("LimbusInjector v2.0.0 loaded | F8 to toggle");
+            Log.LogInfo("LimbusInjector v2.1.0 loaded | F8 to toggle");
             AddComponent<InjectorUI>();
+            // StageController.StartRound 후킹으로 라운드 변화 감지
+            new Harmony("com.mod.limbusinjector").PatchAll(typeof(LimbusInjectorPlugin).Assembly);
+        }
+    }
+
+    // ── Harmony Patch: StageController.StartRound ────────────────────────
+    // 로그 근거: "Postfix_StageController_StartRound | Round: N"
+    [HarmonyPatch(typeof(StageController), "StartRound")]
+    static class Patch_StartRound
+    {
+        static void Postfix()
+        {
+            // InjectorUI 인스턴스에 라운드 시작을 통보
+            InjectorUI._instance?.OnRoundStarted();
         }
     }
 
     public class InjectorUI : MonoBehaviour
     {
         // ── State ────────────────────────────────────────────────────────
+        internal static InjectorUI? _instance;   // Harmony 패치에서 접근
         private bool _showPanel = false;
         private int  _activeTab = 0; // 0=Buff 1=Ability
 
@@ -42,14 +64,29 @@ namespace LimbusInjector
         // Buff tab
         private string _buffSearch   = "";
         private int    _buffPage     = 0;
-        private int    _buffTypeIdx  = 0; // 0=All 1=Positive 2=Negative 3=Sin 4=Other
-        private int    _buffCatIdx   = 0; // 0=All 1=Sys 2=C1..10=C9 11=MD 12=EGO 13=Shin 14=Boss
+        private int    _buffTypeIdx  = 0;
+        private int    _buffCatIdx   = 0;
         private string _stackInput   = "1";
         private string _turnInput    = "3";
+        private string _persistInput = "0";  // [NEW] 지속할 턴
 
         private readonly string[] _typeLabels = { "All", "Positive", "Negative", "Sin", "Other" };
         private readonly string[] _catLabels  = { "All","Sys","C1","C2","C3","C4","C5","C6","C7","C8","C9","MD","EGO","Shin","Boss" };
         private readonly string[] _catKeys    = { "","Sys","C1","C2","C3","C4","C5","C6","C7","C8","C9","MD","EGO","Shin","Boss" };
+
+        // ── [NEW] Persistent Buff System ─────────────────────────────────
+        private struct PersistEntry
+        {
+            public string       buffId;
+            public bool         isBuff;       // true=Buff / false=Ability
+            public int          stack;
+            public int          turn;
+            public int          remainTurns;  // 남은 재부여 횟수
+            public UNIT_FACTION faction;
+            public HashSet<int> instanceIDs;  // 대상 유닛 InstanceID 집합
+        }
+        private List<PersistEntry> _persistList   = new List<PersistEntry>();
+        private Vector2            _persistScroll = Vector2.zero;
 
         // (id, English name, buffType, buffClass, category)
         private readonly (string id, string en, string buffType, string buffClass, string cat)[] _allBuffKeywords = {
@@ -870,99 +907,6 @@ namespace LimbusInjector
             ("FellBulletGroggy", "Fell Bullet: Groggy", "None", "None", "EGO"),
             ("NebulizerExhale", "Nebulizer: Exhale", "None", "None", "C1"),
             ("ReleaseBreath", "Release Breath", "None", "None", "C1"),
-            ("MRR5BaseP", "Refracted: 5Base (Pos)", "None", "None", "MD"),
-            ("MRR5BaseN", "Refracted: 5BaseN", "None", "None", "MD"),
-            ("MRR501", "Refracted: 501", "None", "None", "MD"),
-            ("MRR502", "Refracted: 502", "None", "None", "MD"),
-            ("MRR503", "Refracted: 503", "None", "None", "MD"),
-            ("MRR504", "Refracted: 504", "None", "None", "MD"),
-            ("MRR505", "Refracted: 505", "None", "None", "MD"),
-            ("MRR506", "Refracted: 506", "None", "None", "MD"),
-            ("MRR507", "Refracted: 507", "None", "None", "MD"),
-            ("MRR508", "Refracted: 508", "None", "None", "MD"),
-            ("MRR509", "Refracted: 509", "None", "None", "MD"),
-            ("MRR509P", "Refracted: 509 (Positive)", "None", "None", "MD"),
-            ("MRR509E", "Refracted: 509 (Effect)", "None", "None", "MD"),
-            ("MRR510", "Refracted: 510", "None", "None", "MD"),
-            ("MRR510P", "Refracted: 510 (Positive)", "None", "None", "MD"),
-            ("MRR510E", "Refracted: 510 (Effect)", "None", "None", "MD"),
-            ("MRR511", "Refracted: 511", "None", "None", "MD"),
-            ("MRR511P", "Refracted: 511 (Positive)", "None", "None", "MD"),
-            ("MRR511E", "Refracted: 511 (Effect)", "None", "None", "MD"),
-            ("MRR512", "Refracted: 512", "None", "None", "MD"),
-            ("MRR513", "Refracted: 513", "None", "None", "MD"),
-            ("MRR514", "Refracted: 514", "None", "None", "MD"),
-            ("MRR515", "Refracted: 515", "None", "None", "MD"),
-            ("MRR516", "Refracted: 516", "None", "None", "MD"),
-            ("MRR517", "Refracted: 517", "None", "None", "MD"),
-            ("MRR518", "Refracted: 518", "None", "None", "MD"),
-            ("MRR518P", "Refracted: 518 (Positive)", "None", "None", "MD"),
-            ("MRR518E", "Refracted: 518 (Effect)", "None", "None", "MD"),
-            ("MRR519", "Refracted: 519", "None", "None", "MD"),
-            ("MRR519P", "Refracted: 519 (Positive)", "None", "None", "MD"),
-            ("MRR519E", "Refracted: 519 (Effect)", "None", "None", "MD"),
-            ("MRR520", "Refracted: 520", "None", "None", "MD"),
-            ("MRR520P", "Refracted: 520 (Positive)", "None", "None", "MD"),
-            ("MRR520E", "Refracted: 520 (Effect)", "None", "None", "MD"),
-            ("MRR521", "Refracted: 521", "None", "None", "MD"),
-            ("MRR522", "Refracted: 522", "None", "None", "MD"),
-            ("MRR523", "Refracted: 523", "None", "None", "MD"),
-            ("MRR524", "Refracted: 524", "None", "None", "MD"),
-            ("MRR524P", "Refracted: 524 (Positive)", "None", "None", "MD"),
-            ("MRR524E", "Refracted: 524 (Effect)", "None", "None", "MD"),
-            ("MRR525", "Refracted: 525", "None", "None", "MD"),
-            ("MRR526", "Refracted: 526", "None", "None", "MD"),
-            ("MRR526P", "Refracted: 526 (Positive)", "None", "None", "MD"),
-            ("MRR526E", "Refracted: 526 (Effect)", "None", "None", "MD"),
-            ("MRR527", "Refracted: 527", "None", "None", "MD"),
-            ("MRR527P", "Refracted: 527 (Positive)", "None", "None", "MD"),
-            ("MRR527E", "Refracted: 527 (Effect)", "None", "None", "MD"),
-            ("MRR528", "Refracted: 528", "None", "None", "MD"),
-            ("MRR528P", "Refracted: 528 (Positive)", "None", "None", "MD"),
-            ("MRR528E", "Refracted: 528 (Effect)", "None", "None", "MD"),
-            ("MRR529", "Refracted: 529", "None", "None", "MD"),
-            ("MRR530", "Refracted: 530", "None", "None", "MD"),
-            ("MRR531", "Refracted: 531", "None", "None", "MD"),
-            ("MRR532", "Refracted: 532", "None", "None", "MD"),
-            ("MRR533", "Refracted: 533", "None", "None", "MD"),
-            ("MRR534", "Refracted: 534", "None", "None", "MD"),
-            ("MRR535", "Refracted: 535", "None", "None", "MD"),
-            ("MRR536", "Refracted: 536", "None", "None", "MD"),
-            ("MRR537", "Refracted: 537", "None", "None", "MD"),
-            ("MRR538", "Refracted: 538", "None", "None", "MD"),
-            ("MRR539", "Refracted: 539", "None", "None", "MD"),
-            ("MRR540", "Refracted: 540", "None", "None", "MD"),
-            ("MRR541", "Refracted: 541", "None", "None", "MD"),
-            ("MRR542", "Refracted: 542", "None", "None", "MD"),
-            ("MRR543", "Refracted: 543", "None", "None", "MD"),
-            ("MRR544", "Refracted: 544", "None", "None", "MD"),
-            ("MRR545", "Refracted: 545", "None", "None", "MD"),
-            ("MRR546", "Refracted: 546", "None", "None", "MD"),
-            ("MRR547", "Refracted: 547", "None", "None", "MD"),
-            ("MRR548", "Refracted: 548", "None", "None", "MD"),
-            ("MRR549", "Refracted: 549", "None", "None", "MD"),
-            ("MRR550", "Refracted: 550", "None", "None", "MD"),
-            ("MRR551", "Refracted: 551", "None", "None", "MD"),
-            ("MRR552", "Refracted: 552", "None", "None", "MD"),
-            ("MRR553", "Refracted: 553", "None", "None", "MD"),
-            ("MRR553P", "Refracted: 553 (Positive)", "None", "None", "MD"),
-            ("MRR553E", "Refracted: 553 (Effect)", "None", "None", "MD"),
-            ("MRR554", "Refracted: 554", "None", "None", "MD"),
-            ("MRR555", "Refracted: 555", "None", "None", "MD"),
-            ("MRR556", "Refracted: 556", "None", "None", "MD"),
-            ("MRR557", "Refracted: 557", "None", "None", "MD"),
-            ("MRR558", "Refracted: 558", "None", "None", "MD"),
-            ("MRR559", "Refracted: 559", "None", "None", "MD"),
-            ("MRR560", "Refracted: 560", "None", "None", "MD"),
-            ("MRR561", "Refracted: 561", "None", "None", "MD"),
-            ("MRR562", "Refracted: 562", "None", "None", "MD"),
-            ("MRR563", "Refracted: 563", "None", "None", "MD"),
-            ("MRR564", "Refracted: 564", "None", "None", "MD"),
-            ("MRR565", "Refracted: 565", "None", "None", "MD"),
-            ("MRR566", "Refracted: 566", "None", "None", "MD"),
-            ("MRR567", "Refracted: 567", "None", "None", "MD"),
-            ("MRR568", "Refracted: 568", "None", "None", "MD"),
-            ("MRR569", "Refracted: 569", "None", "None", "MD"),
             ("DianxueDonQuixote", "Dianxue (Don Quixote)", "None", "None", "EGO"),
             ("FirePunchFuel", "Fire Punch Fuel", "None", "None", "EGO"),
             ("FirePunchFuelOverheated", "Fire Punch Fuel: Overheated", "None", "None", "EGO"),
@@ -1025,6 +969,60 @@ namespace LimbusInjector
             ("SupportProtectTypo", "Support Protect (Legacy)", "None", "None", "EGO"),
             ("EnhanceZilu", "Enhance (Zilu)", "None", "None", "EGO"),
             ("BurstVulnerableZilu", "Rupture Vulnerable (Zilu)", "None", "None", "EGO"),
+            ("Irritation", "Tiantu Star (General)", "None", "None", "Shin"),
+            ("HugeIrritation", "Shin: Tiantu Star", "None", "None", "Shin"),
+            ("Obedient", "Obedience", "None", "None", "C7"),
+            ("FamilyTreasure", "Explosive Amusement", "None", "None", "C8"),
+            ("OutpouringAnger", "Outpouring Anger", "None", "None", "C8"),
+            ("Honglu_Xi", "Joy (Xi)", "None", "None", "C8"),
+            ("Honglu_Le", "Pleasure (Le)", "None", "None", "C8"),
+            ("Honglu_Ai", "Sorrow (Ai)", "None", "None", "C8"),
+            ("Honglu_Nu", "Anger (Nu)", "None", "None", "C8"),
+            ("SupremeEternalLife", "Supreme Eternal Life", "None", "None", "C8"),
+            ("ImperfectEternalLife", "Imperfect Eternal Life", "None", "None", "C8"),
+            ("FaintEternalLife", "Faint Eternal Life", "None", "None", "C8"),
+            ("DisengageCombat", "Disengage Combat", "None", "None", "C8"),
+            ("ReloadKeepAmmo", "Reload & Keep Ammo", "None", "None", "C8"),
+            ("MadFeather", "Mad Feather", "None", "None", "EGO"),
+            ("Chesed_Mercy", "Chesed's Mercy", "None", "None", "EGO"),
+            ("Ryoshu_Attackup", "Ryoshu: Attack Up", "None", "None", "EGO"),
+            ("Honglu_EGOResourceup", "Hong Lu: EGO Resource Up", "None", "None", "EGO"),
+            ("WaveSinking", "Wave Sinking", "None", "None", "C4"),
+            ("HystericGauge", "Hysteric Gauge", "None", "None", "EGO"),
+            ("MagicalGirlAppear", "Magical Girl Appears!", "None", "None", "EGO"),
+            ("NoVillain", "No Villain", "None", "None", "EGO"),
+            ("VillainMark", "Villain Mark", "None", "None", "EGO"),
+            ("ArcanaQueenOfHate", "Magical Arcana", "None", "None", "EGO"),
+            ("ThePowerOfLoveAndHate", "Power of Love and Hate", "None", "None", "EGO"),
+            ("ColdBlackTear", "Cold Black Tear", "None", "None", "EGO"),
+            ("HelplessTear", "Helpless Tear", "None", "None", "EGO"),
+            ("WornOutKnight", "Worn-Out Knight", "None", "None", "EGO"),
+            ("SignOfDespair", "Sign of Despair", "None", "None", "EGO"),
+            ("CollapsedPride", "Collapsed Pride", "None", "None", "EGO"),
+            ("PowerOfLoveAndJustice", "Power of Love and Justice", "None", "None", "EGO"),
+            ("BloodArmorMeursault", "Meridian Armor (Meursault)", "None", "None", "C6"),
+            ("FocusOnActing", "Performance Focus", "None", "None", "C6"),
+            ("ParadeConcentration", "La Mancha Parade", "None", "None", "C6"),
+            ("HanafudaOne", "Hanafuda: Pine-Crane", "None", "None", "EGO"),
+            ("HanafudaTwo", "Hanafuda: Pampas", "None", "None", "EGO"),
+            ("HanafudaThree", "Hanafuda: Blue Cherry", "None", "None", "EGO"),
+            ("HanafudaCombo", "Hikari (Light)", "None", "None", "EGO"),
+            ("VibrationIgnition", "Tremor Ignition", "None", "None", "C6"),
+            ("BulletPropellant", "Bullet Propellant", "None", "None", "EGO"),
+            ("BulletSpent", "Spent Ammo", "None", "None", "Sys"),
+            ("Prey", "Prey", "None", "None", "C1"),
+            ("Complacency", "Complacency", "None", "None", "C1"),
+            ("BattleSense", "Battle Sense", "None", "None", "C1"),
+            ("RestoredBattleSense", "Restored Battle Sense", "None", "None", "C1"),
+            ("ResolveRyoshu", "Resolve (Ryoshu)", "None", "None", "C6"),
+            ("CutoffRyoshu", "Cutoff (Ryoshu)", "None", "None", "C6"),
+            ("CutbondRyoshu", "Cut Bond (Ryoshu)", "None", "None", "C6"),
+            ("DukkhaRyoshu_LowMorale", "Dukkha (Ryoshu): Low Morale", "None", "None", "C6"),
+            ("DukkhaRyoshu_Panic", "Dukkha (Ryoshu): Panic", "None", "None", "C6"),
+            ("CriticalDamageUp", "Critical Damage Up", "None", "None", "C4"),
+            ("BlackNightmare", "Black Nightmare", "None", "None", "C4"),
+            ("DeliciousSauce", "Delicious Sauce", "None", "None", "Sys"),
+            // ── 누락 복원 (DarkBeastSnake ~ EagleClawWoundAlly) ──────────
             ("DarkBeastSnake_LowMorale", "Dark Beast Snake: Low Morale", "None", "None", "C5"),
             ("DarkBeastSnake_Panic", "Dark Beast Snake: Panic", "None", "None", "C5"),
             ("NEgoFleshSpatula_LowMorale", "N EGO Flesh Spatula: Low Morale", "None", "None", "C5"),
@@ -1054,45 +1052,19 @@ namespace LimbusInjector
             ("QiuAndHonglu", "Qiu and Hong Lu", "None", "None", "EGO"),
             ("BeastEyes_LowMorale", "Beast Eyes: Low Morale", "None", "None", "C5"),
             ("BeastEyes_Panic", "Beast Eyes: Panic", "None", "None", "C5"),
-            ("Bothersome", "Bothersome", "None", "None", "C1"),
-            ("VibrationIgnition", "Tremor Ignition", "None", "None", "C6"),
-            ("BulletPropellant", "Bullet Propellant", "None", "None", "EGO"),
             ("BulletPropellantSpecial", "Bullet Propellant (Special)", "None", "None", "EGO"),
-            ("BulletSpent", "Spent Ammo", "None", "None", "Sys"),
-            ("Prey", "Prey", "None", "None", "C1"),
-            ("Complacency", "Complacency", "None", "None", "C1"),
-            ("BattleSense", "Battle Sense", "None", "None", "C1"),
-            ("RestoredBattleSense", "Restored Battle Sense", "None", "None", "C1"),
-            ("Irritation", "Tiantu Star (General)", "None", "None", "Shin"),
-            ("HugeIrritation", "Shin: Tiantu Star", "None", "None", "Shin"),
             ("LastingHongwonWill_LowMorale", "Hongwon's Will: Low Morale", "None", "None", "Boss"),
             ("LastingHongwonWill_Panic", "Hongwon's Will: Panic", "None", "None", "Boss"),
             ("PileObedient", "Piled Obedience", "None", "None", "C7"),
-            ("Obedient", "Obedience", "None", "None", "C7"),
             ("ExpensiveJade", "Precious Jade", "None", "None", "C7"),
-            ("FamilyTreasure", "Explosive Amusement", "None", "None", "C8"),
-            ("OutpouringAnger", "Outpouring Anger", "None", "None", "C8"),
-            ("Honglu_Xi", "Joy (Xi)", "None", "None", "C8"),
-            ("Honglu_Le", "Pleasure (Le)", "None", "None", "C8"),
-            ("Honglu_Ai", "Sorrow (Ai)", "None", "None", "C8"),
-            ("Honglu_Nu", "Anger (Nu)", "None", "None", "C8"),
-            ("SupremeEternalLife", "Supreme Eternal Life", "None", "None", "C8"),
-            ("ImperfectEternalLife", "Imperfect Eternal Life", "None", "None", "C8"),
-            ("FaintEternalLife", "Faint Eternal Life", "None", "None", "C8"),
             ("LongLastingHongwonWill_LowMorale", "Long-lasting Hongwon's Will: Low Morale", "None", "None", "Boss"),
             ("LongLastingHongwonWill_Panic", "Long-lasting Hongwon's Will: Panic", "None", "None", "Boss"),
             ("GoldenBoughSync", "Golden Bough Sync", "None", "None", "Boss"),
             ("GoldenBoughSyncDistorted", "Golden Bough Sync (Distorted)", "None", "None", "Boss"),
-            ("DisengageCombat", "Disengage Combat", "None", "None", "C8"),
-            ("ReloadKeepAmmo", "Reload & Keep Ammo", "None", "None", "C8"),
             ("MadFeather_LowMorale", "Mad Feather: Low Morale", "None", "None", "EGO"),
             ("MadFeather_Panic", "Mad Feather: Panic", "None", "None", "EGO"),
-            ("MadFeather", "Mad Feather", "None", "None", "EGO"),
             ("DeepAngry_LowMorale", "Deep Anger: Low Morale", "None", "None", "EGO"),
             ("DeepAngry_Panic", "Deep Anger: Panic", "None", "None", "EGO"),
-            ("Chesed_Mercy", "Chesed's Mercy", "None", "None", "EGO"),
-            ("Ryoshu_Attackup", "Ryoshu: Attack Up", "None", "None", "EGO"),
-            ("Honglu_EGOResourceup", "Hong Lu: EGO Resource Up", "None", "None", "EGO"),
             ("WaitingXichun", "Waiting (Xichun)", "None", "None", "C8"),
             ("StartXichun", "Start (Xichun)", "None", "None", "C8"),
             ("CheerUpXichun", "Cheer Up (Xichun)", "None", "None", "C8"),
@@ -1112,22 +1084,9 @@ namespace LimbusInjector
             ("RoseThorn", "Rose Thorn", "None", "None", "EGO"),
             ("ChoSuperCharge", "Super Charge (Cho)", "None", "None", "EGO"),
             ("ShareCharge", "Share Charge", "None", "None", "EGO"),
-            ("WaveSinking", "Wave Sinking", "None", "None", "C4"),
-            ("HystericGauge", "Hysteric Gauge", "None", "None", "EGO"),
-            ("MagicalGirlAppear", "Magical Girl Appears!", "None", "None", "EGO"),
-            ("NoVillain", "No Villain", "None", "None", "EGO"),
-            ("VillainMark", "Villain Mark", "None", "None", "EGO"),
-            ("ArcanaQueenOfHate", "Magical Arcana", "None", "None", "EGO"),
-            ("ThePowerOfLoveAndHate", "Power of Love and Hate", "None", "None", "EGO"),
-            ("ColdBlackTear", "Cold Black Tear", "None", "None", "EGO"),
-            ("HelplessTear", "Helpless Tear", "None", "None", "EGO"),
-            ("WornOutKnight", "Worn-Out Knight", "None", "None", "EGO"),
-            ("SignOfDespair", "Sign of Despair", "None", "None", "EGO"),
-            ("CollapsedPride", "Collapsed Pride", "None", "None", "EGO"),
             ("FailedToAssistQueen", "Failed to Assist the Queen", "None", "None", "EGO"),
             ("UsedTooMuchPower", "Used Too Much Power", "None", "None", "EGO"),
             ("ChasingArcana", "Arcana Slave", "None", "None", "EGO"),
-            ("PowerOfLoveAndJustice", "Power of Love and Justice", "None", "None", "EGO"),
             ("CentralCommandTeamCaptain", "Central Command Captain", "None", "None", "MD"),
             ("BestWelfareTeamMember", "Best Welfare Member", "None", "None", "MD"),
             ("BlessingAlly", "Blessing (Ally)", "None", "None", "EGO"),
@@ -1329,16 +1288,9 @@ namespace LimbusInjector
             ("SnipingArrowMode", "Sniping Arrow Mode", "None", "None", "EGO"),
             ("AStrokeOfDeath", "Stroke of Death", "None", "None", "EGO"),
             ("WOverCharge", "W Overcharge", "None", "None", "EGO"),
-            ("BloodArmorMeursault", "Meridian Armor (Meursault)", "None", "None", "C6"),
-            ("FocusOnActing", "Performance Focus", "None", "None", "C6"),
-            ("ParadeConcentration", "La Mancha Parade", "None", "None", "C6"),
             ("BloodArmorMeursaultDrainEffect", "Meridian Armor Drain", "None", "None", "C6"),
             ("EmergencyChargeForceField", "Emergency Force Field", "None", "None", "C3"),
             ("BloodArmorCasting", "Forged Meridian", "None", "None", "C6"),
-            ("HanafudaOne", "Hanafuda: Pine-Crane", "None", "None", "EGO"),
-            ("HanafudaTwo", "Hanafuda: Pampas", "None", "None", "EGO"),
-            ("HanafudaThree", "Hanafuda: Blue Cherry", "None", "None", "EGO"),
-            ("HanafudaCombo", "Hikari (Light)", "None", "None", "EGO"),
             ("HurtNightStiletto", "Wound", "None", "None", "C6"),
             ("CriHurtNightStiletto", "Deep Wound", "None", "None", "C6"),
             ("HorrHurtNightStiletto", "Fatal Wound", "None", "None", "C6"),
@@ -1457,7 +1409,7 @@ namespace LimbusInjector
             ("Cubism_Panic", "Cubism: Panic", "None", "None", "C7"),
             ("LanternHohenheimBigBird", "Lantern (Big Bird)", "None", "None", "C1"),
             ("DelusionHohenheimBigBird", "Delusion (Big Bird)", "None", "None", "C1"),
-            ("LvUpHohenheimBigBird", "E.G.O Resonance Up", "Neutral", "NonvolatileBuff", "C1"),
+            ("LvUpHohenheimBigBird", "E.G.O Resonance Up", "None", "None", "C1"),
             ("HohenheimBigBird_LowMorale", "Big Bird: Low Morale", "None", "None", "C1"),
             ("HohenheimBigBird_Panic", "Big Bird: Panic", "None", "None", "C1"),
             ("HumanBoneTheRings", "Human Bone (Rings)", "None", "None", "C5"),
@@ -1485,11 +1437,6 @@ namespace LimbusInjector
             ("MiddleFingerDaddy_Panic", "Middle Finger Dad: Panic", "None", "None", "Boss"),
             ("MiddleFingerDaughter_LowMorale", "Middle Finger Daughter: Low Morale", "None", "None", "Boss"),
             ("MiddleFingerDaughter_Panic", "Middle Finger Daughter: Panic", "None", "None", "Boss"),
-            ("ResolveRyoshu", "Resolve (Ryoshu)", "None", "None", "C6"),
-            ("CutoffRyoshu", "Cutoff (Ryoshu)", "None", "None", "C6"),
-            ("CutbondRyoshu", "Cut Bond (Ryoshu)", "None", "None", "C6"),
-            ("DukkhaRyoshu_LowMorale", "Dukkha (Ryoshu): Low Morale", "None", "None", "C6"),
-            ("DukkhaRyoshu_Panic", "Dukkha (Ryoshu): Panic", "None", "None", "C6"),
             ("OffenseBug", "Offensive Bug", "None", "None", "C1"),
             ("DefenseBug", "Defensive Bug", "None", "None", "C1"),
             ("AgainstMyWill_LowMorale", "Against My Will: Low Morale", "None", "None", "C9"),
@@ -1603,8 +1550,6 @@ namespace LimbusInjector
             ("UnlockBuff_Rien3", "Unlock (Rien) III", "None", "None", "C9"),
             ("KarmaOfIndexRien_2Phase", "Karma (Rien) Phase 2", "None", "None", "C9"),
             ("OffenseBugEffect", "Offensive Bug Effect", "None", "None", "C9"),
-            ("CriticalDamageUp", "Critical Damage Up", "None", "None", "C4"),
-            ("BlackNightmare", "Black Nightmare", "None", "None", "C4"),
             ("RyoshuParryIndexFingerWe", "Ryoshu Parry (Index): We", "None", "None", "Boss"),
             ("RyoshuParryIndexFingerThey", "Ryoshu Parry (Index): They", "None", "None", "Boss"),
             ("ReinforcedTattooIshmael", "Reinforced Tattoo (Ishmael)", "None", "None", "C5"),
@@ -1682,7 +1627,6 @@ namespace LimbusInjector
             ("ChargedSting", "Charged Sting", "None", "None", "EGO"),
             ("FaustFlameMothEmber", "Faust: Flame Moth Ember", "None", "None", "EGO"),
             ("BloodthirstHard", "Bloodthirst (Hard)", "None", "None", "C1"),
-            ("DeliciousSauce", "Delicious Sauce", "None", "None", "Sys"),
             ("Yummy_Lowmorale", "Yummy: Low Morale", "None", "None", "Sys"),
             ("Yummy_Panic", "Yummy: Panic", "None", "None", "Sys"),
             ("ArtworkBodyArt01", "Artwork: Body Art I", "None", "None", "C7"),
@@ -1742,6 +1686,100 @@ namespace LimbusInjector
             ("HeatingWireOnSpiderTwo", "Heating Wire ON (Spider II)", "None", "None", "Boss"),
             ("BearClawWoundAlly", "Bear Claw Wound (Ally)", "None", "None", "C7"),
             ("EagleClawWoundAlly", "Eagle Claw Wound (Ally)", "None", "None", "C7"),
+            // ── MRR (Refracted Mirror) entries ────────────────────────────
+            ("MRR5BaseP", "Refracted: 5Base (Pos)", "None", "None", "MD"),
+            ("MRR5BaseN", "Refracted: 5BaseN", "None", "None", "MD"),
+            ("MRR501", "Refracted: 501", "None", "None", "MD"),
+            ("MRR502", "Refracted: 502", "None", "None", "MD"),
+            ("MRR503", "Refracted: 503", "None", "None", "MD"),
+            ("MRR504", "Refracted: 504", "None", "None", "MD"),
+            ("MRR505", "Refracted: 505", "None", "None", "MD"),
+            ("MRR506", "Refracted: 506", "None", "None", "MD"),
+            ("MRR507", "Refracted: 507", "None", "None", "MD"),
+            ("MRR508", "Refracted: 508", "None", "None", "MD"),
+            ("MRR509", "Refracted: 509", "None", "None", "MD"),
+            ("MRR509P", "Refracted: 509 (Positive)", "None", "None", "MD"),
+            ("MRR509E", "Refracted: 509 (Effect)", "None", "None", "MD"),
+            ("MRR510", "Refracted: 510", "None", "None", "MD"),
+            ("MRR510P", "Refracted: 510 (Positive)", "None", "None", "MD"),
+            ("MRR510E", "Refracted: 510 (Effect)", "None", "None", "MD"),
+            ("MRR511", "Refracted: 511", "None", "None", "MD"),
+            ("MRR511P", "Refracted: 511 (Positive)", "None", "None", "MD"),
+            ("MRR511E", "Refracted: 511 (Effect)", "None", "None", "MD"),
+            ("MRR512", "Refracted: 512", "None", "None", "MD"),
+            ("MRR513", "Refracted: 513", "None", "None", "MD"),
+            ("MRR514", "Refracted: 514", "None", "None", "MD"),
+            ("MRR515", "Refracted: 515", "None", "None", "MD"),
+            ("MRR516", "Refracted: 516", "None", "None", "MD"),
+            ("MRR517", "Refracted: 517", "None", "None", "MD"),
+            ("MRR518", "Refracted: 518", "None", "None", "MD"),
+            ("MRR518P", "Refracted: 518 (Positive)", "None", "None", "MD"),
+            ("MRR518E", "Refracted: 518 (Effect)", "None", "None", "MD"),
+            ("MRR519", "Refracted: 519", "None", "None", "MD"),
+            ("MRR519P", "Refracted: 519 (Positive)", "None", "None", "MD"),
+            ("MRR519E", "Refracted: 519 (Effect)", "None", "None", "MD"),
+            ("MRR520", "Refracted: 520", "None", "None", "MD"),
+            ("MRR520P", "Refracted: 520 (Positive)", "None", "None", "MD"),
+            ("MRR520E", "Refracted: 520 (Effect)", "None", "None", "MD"),
+            ("MRR521", "Refracted: 521", "None", "None", "MD"),
+            ("MRR522", "Refracted: 522", "None", "None", "MD"),
+            ("MRR523", "Refracted: 523", "None", "None", "MD"),
+            ("MRR524", "Refracted: 524", "None", "None", "MD"),
+            ("MRR524P", "Refracted: 524 (Positive)", "None", "None", "MD"),
+            ("MRR524E", "Refracted: 524 (Effect)", "None", "None", "MD"),
+            ("MRR525", "Refracted: 525", "None", "None", "MD"),
+            ("MRR526", "Refracted: 526", "None", "None", "MD"),
+            ("MRR526P", "Refracted: 526 (Positive)", "None", "None", "MD"),
+            ("MRR526E", "Refracted: 526 (Effect)", "None", "None", "MD"),
+            ("MRR527", "Refracted: 527", "None", "None", "MD"),
+            ("MRR527P", "Refracted: 527 (Positive)", "None", "None", "MD"),
+            ("MRR527E", "Refracted: 527 (Effect)", "None", "None", "MD"),
+            ("MRR528", "Refracted: 528", "None", "None", "MD"),
+            ("MRR528P", "Refracted: 528 (Positive)", "None", "None", "MD"),
+            ("MRR528E", "Refracted: 528 (Effect)", "None", "None", "MD"),
+            ("MRR529", "Refracted: 529", "None", "None", "MD"),
+            ("MRR530", "Refracted: 530", "None", "None", "MD"),
+            ("MRR531", "Refracted: 531", "None", "None", "MD"),
+            ("MRR532", "Refracted: 532", "None", "None", "MD"),
+            ("MRR533", "Refracted: 533", "None", "None", "MD"),
+            ("MRR534", "Refracted: 534", "None", "None", "MD"),
+            ("MRR535", "Refracted: 535", "None", "None", "MD"),
+            ("MRR536", "Refracted: 536", "None", "None", "MD"),
+            ("MRR537", "Refracted: 537", "None", "None", "MD"),
+            ("MRR538", "Refracted: 538", "None", "None", "MD"),
+            ("MRR539", "Refracted: 539", "None", "None", "MD"),
+            ("MRR540", "Refracted: 540", "None", "None", "MD"),
+            ("MRR541", "Refracted: 541", "None", "None", "MD"),
+            ("MRR542", "Refracted: 542", "None", "None", "MD"),
+            ("MRR543", "Refracted: 543", "None", "None", "MD"),
+            ("MRR544", "Refracted: 544", "None", "None", "MD"),
+            ("MRR545", "Refracted: 545", "None", "None", "MD"),
+            ("MRR546", "Refracted: 546", "None", "None", "MD"),
+            ("MRR547", "Refracted: 547", "None", "None", "MD"),
+            ("MRR548", "Refracted: 548", "None", "None", "MD"),
+            ("MRR549", "Refracted: 549", "None", "None", "MD"),
+            ("MRR550", "Refracted: 550", "None", "None", "MD"),
+            ("MRR551", "Refracted: 551", "None", "None", "MD"),
+            ("MRR552", "Refracted: 552", "None", "None", "MD"),
+            ("MRR553", "Refracted: 553", "None", "None", "MD"),
+            ("MRR553P", "Refracted: 553 (Positive)", "None", "None", "MD"),
+            ("MRR553E", "Refracted: 553 (Effect)", "None", "None", "MD"),
+            ("MRR554", "Refracted: 554", "None", "None", "MD"),
+            ("MRR555", "Refracted: 555", "None", "None", "MD"),
+            ("MRR556", "Refracted: 556", "None", "None", "MD"),
+            ("MRR557", "Refracted: 557", "None", "None", "MD"),
+            ("MRR558", "Refracted: 558", "None", "None", "MD"),
+            ("MRR559", "Refracted: 559", "None", "None", "MD"),
+            ("MRR560", "Refracted: 560", "None", "None", "MD"),
+            ("MRR561", "Refracted: 561", "None", "None", "MD"),
+            ("MRR562", "Refracted: 562", "None", "None", "MD"),
+            ("MRR563", "Refracted: 563", "None", "None", "MD"),
+            ("MRR564", "Refracted: 564", "None", "None", "MD"),
+            ("MRR565", "Refracted: 565", "None", "None", "MD"),
+            ("MRR566", "Refracted: 566", "None", "None", "MD"),
+            ("MRR567", "Refracted: 567", "None", "None", "MD"),
+            ("MRR568", "Refracted: 568", "None", "None", "MD"),
+            ("MRR569", "Refracted: 569", "None", "None", "MD"),
         };
 
         // Ability tab
@@ -1749,16 +1787,13 @@ namespace LimbusInjector
         private int    _abilityPage   = 0;
 
         private readonly (string id, string desc)[] _allAbilities = {
-            // ── 공격/방어 ────────────────────────────────────────────────
             ("DefenseAdder",                          "방어 레벨 +stack"),
             ("ParryingResultAdder",                   "합 위력 +stack"),
             ("ParryingResultAdderIfFasterThanTarget", "속도 우위 시 합 위력 +stack"),
             ("MaxHpUpMultiplier",                     "최대 체력 배율 +stack%"),
             ("MaxHpUpAdder",                          "최대 체력 +stack"),
-            // ── 속도 ─────────────────────────────────────────────────────
             ("MaxSpeedAdder",                         "속도 최댓값 +stack"),
             ("MinSpeedAdder",                         "속도 최솟값 +stack"),
-            // ── 코인/정신력 ───────────────────────────────────────────────
             ("EgoResourceAdder",                      "E.G.O 자원 +stack"),
             ("MpUsageByEgoDown",                      "E.G.O 자원 소모 감소"),
             ("MpUsageByEgoUp",                        "E.G.O 자원 소모 증가"),
@@ -1766,24 +1801,19 @@ namespace LimbusInjector
             ("MentalSystemResultIncreaseDown",        "정신력 회복량 감소"),
             ("MentalSystemResultDecreaseUp",          "정신력 손실량 증가"),
             ("MentalSystemResultDecreaseDown",        "정신력 손실량 감소"),
-            // ── 코인 고정 ─────────────────────────────────────────────────
             ("ForceHeadOnAllCoinInAllSlots",          "전체 코인 앞면 고정"),
             ("ForceTailOnParrying",                   "클래시 코인 뒷면 고정"),
             ("ForceHeadOnParrying",                   "클래시 코인 앞면 고정"),
             ("ForceOpponentHeadOnParrying",           "상대 클래시 코인 앞면 고정"),
             ("ForceOpponentTailOnParrying",           "상대 클래시 코인 뒷면 고정"),
-            // ── 대상 지정 ─────────────────────────────────────────────────
             ("AttackFastestEnemy",                    "가장 빠른 적 공격"),
             ("AttackSlowestEnemy",                    "가장 느린 적 공격"),
-            // ── 보호막/불사 ───────────────────────────────────────────────
             ("Shield_NextTurn",                       "다음 턴 보호막 +stack"),
             ("Immortal",                              "불사 (즉사 무효)"),
             ("Immortal_If_Not_Alone",                 "혼자가 아닐 때 불사"),
-            // ── 피해 관련 ─────────────────────────────────────────────────
             ("TakeBsDmgMultiplier",                   "흐트러짐 피해 배율"),
             ("AttackDmgupByStackRatio",               "스택 비율 공격 피해 증가"),
             ("SystemAbility_TakeDamageMultiplier",    "받는 피해 배율"),
-            // ── 기타 ─────────────────────────────────────────────────────
             ("BlockMentalCorrision",                  "침식 차단"),
             ("SystemAbility_CantRetreat",             "후퇴 불가"),
             ("IsTargetableFalse",                     "타겟 불가"),
@@ -1791,7 +1821,6 @@ namespace LimbusInjector
             ("BreakOnRoundEnd",                       "턴 종료 시 흐트러짐"),
             ("ReactiveShield_VibrationExplosion",     "진동 폭발 시 보호막"),
             ("ReactiveShield_SinkingTurn",            "침잠 횟수 시 보호막"),
-            // ── 특수 (흑수 시너지) ────────────────────────────────────────
             ("KCorpHongluPassive",                    "K사 홍루 패시브"),
             ("RCorpMeursaultDefense",                 "R사 뫼르소 방어"),
             ("CumulativeLacerationSystem",            "누적 출혈 시스템"),
@@ -1800,20 +1829,30 @@ namespace LimbusInjector
         private const int PAGE_SIZE = 12;
 
         // ── Window ───────────────────────────────────────────────────────
-        // [CHANGED] Window size: 560×700 → 660×760
-        private Rect    _windowRect = new Rect(20, 20, 660, 760);
+        private Rect    _windowRect = new Rect(20, 20, 660, 820);
         private bool    _isDragging = false;
         private Vector2 _dragOffset = Vector2.zero;
 
         // ── Init ─────────────────────────────────────────────────────────
         public InjectorUI(IntPtr ptr) : base(ptr) { }
-        private void Start() { }
+        private void Start() { _instance = this; }
+
+        // ── [NEW] Harmony 콜백: StartRound Postfix에서 호출 ─────────────
+        /// <summary>StageController.StartRound가 실행될 때마다 Harmony Postfix에서 호출됩니다.</summary>
+        internal void OnRoundStarted()
+        {
+            if (_persistList.Count == 0) return;
+            LimbusInjectorPlugin.Log?.LogInfo("[LimbusInjector] OnRoundStarted → TickPersistentBuffs");
+            TickPersistentBuffs();
+        }
 
         // ── Update ───────────────────────────────────────────────────────
         private void Update()
         {
             if (Input.GetKeyDown(KeyCode.F8))
                 _showPanel = !_showPanel;
+            // 라운드 감지는 Harmony 패치(OnRoundStarted)가 담당하므로
+            // Update에서는 폴링을 수행하지 않습니다.
         }
 
         // ── GUI ──────────────────────────────────────────────────────────
@@ -1821,7 +1860,7 @@ namespace LimbusInjector
         {
             if (!_showPanel) return;
 
-            GUI.Box(_windowRect, "LimbusInjector ver.2.0.0");
+            GUI.Box(_windowRect, "LimbusInjector ver.2.1.0");
 
             var titleBar = new Rect(_windowRect.x, _windowRect.y, _windowRect.width, 20);
             var e = Event.current;
@@ -1842,6 +1881,8 @@ namespace LimbusInjector
             else                 DrawAbilityTab();
 
             GUILayout.Space(4);
+            DrawPersistList();   // [NEW]
+            GUILayout.Space(2);
             GUILayout.Label(string.IsNullOrEmpty(_status) ? " " : _status);
             GUILayout.EndArea();
         }
@@ -1849,7 +1890,6 @@ namespace LimbusInjector
         // ── Faction + Multi-Unit Selection ───────────────────────────────
         private void DrawFactionAndUnits()
         {
-            // [CHANGED] Player/Enemy buttons: 80 → 95 | All/None buttons: 40/44 → 48/50
             GUILayout.BeginHorizontal();
             GUILayout.Label("Faction:", GUILayout.Width(55));
             if (GUILayout.Toggle(_faction == UNIT_FACTION.PLAYER, "Player", "Button", GUILayout.Width(95)))
@@ -1867,7 +1907,6 @@ namespace LimbusInjector
             if (GUILayout.Button("None", GUILayout.Width(50))) { _selectedUnits.Clear(); _selectedNames.Clear(); }
             GUILayout.EndHorizontal();
 
-            // Unit list
             GUILayout.Label("── Units ──");
             var bom = FindObjectOfType<BattleObjectManager>();
             if (bom == null) { GUILayout.Label("[Not in battle]"); return; }
@@ -1898,7 +1937,6 @@ namespace LimbusInjector
                 bool isSel = _selectedUnits.ContainsKey(instanceID);
                 string label = isSel ? $"[{name}]" : name;
 
-                // [CHANGED] Unit button MaxWidth: 88 → 105
                 if (GUILayout.Button(label, GUILayout.MaxWidth(105)))
                 {
                     if (isSel) { _selectedUnits.Remove(instanceID); _selectedNames.Remove(instanceID); }
@@ -1930,7 +1968,7 @@ namespace LimbusInjector
                 var idProp = unit.GetType().GetProperty("InstanceID")!;
                 int instanceID = (int)idProp.GetValue(unit)!;
                 var nameMethod = unit.GetType().GetMethod("GetUniqueName");
-                string name = nameMethod.Invoke(unit, null) as string ?? $"ID:{instanceID}";
+                string name = nameMethod?.Invoke(unit, null) as string ?? $"ID:{instanceID}";
                 _selectedUnits[instanceID] = unit;
                 _selectedNames[instanceID] = name;
             }
@@ -1940,25 +1978,32 @@ namespace LimbusInjector
         private void DrawTabBar()
         {
             GUILayout.BeginHorizontal();
-            // [CHANGED] Tab buttons: 120 → 150
             if (GUILayout.Toggle(_activeTab == 0, "Buff",    "Button", GUILayout.Width(150))) _activeTab = 0;
             if (GUILayout.Toggle(_activeTab == 1, "Ability", "Button", GUILayout.Width(150))) _activeTab = 1;
+            GUILayout.EndHorizontal();
+        }
+
+        // ── [NEW] Stack / Turn / Persist 입력 공통 행 ────────────────────
+        private void DrawParamRow()
+        {
+            GUILayout.BeginHorizontal();
+            GUILayout.Label("Stack:",   GUILayout.Width(45));
+            _stackInput   = GUILayout.TextField(_stackInput,   GUILayout.Width(44));
+            GUILayout.Label("Turn:",    GUILayout.Width(38));
+            _turnInput    = GUILayout.TextField(_turnInput,    GUILayout.Width(44));
+            // [NEW] Persist 입력: 0이면 1회 부여, N이면 매 라운드 N번 재부여
+            GUILayout.Label("Persist:", GUILayout.Width(52));
+            _persistInput = GUILayout.TextField(_persistInput, GUILayout.Width(44));
+            GUILayout.Label("(turns re-apply, 0=once)", GUILayout.Width(200));
             GUILayout.EndHorizontal();
         }
 
         // ── Buff Tab ─────────────────────────────────────────────────────
         private void DrawBuffTab()
         {
-            // Stack / Turn
-            GUILayout.BeginHorizontal();
-            GUILayout.Label("Stack:", GUILayout.Width(45));
-            _stackInput = GUILayout.TextField(_stackInput, GUILayout.Width(50));
-            GUILayout.Label("Turn:", GUILayout.Width(42));
-            _turnInput  = GUILayout.TextField(_turnInput,  GUILayout.Width(50));
-            GUILayout.EndHorizontal();
+            DrawParamRow();  // [CHANGED] 공통 파라미터 행
             GUILayout.Space(2);
 
-            // [CHANGED] Type filter row: 5 × 84 → 5 × 100 = 500px
             GUILayout.BeginHorizontal();
             for (int i = 0; i < _typeLabels.Length; i++)
             {
@@ -1969,7 +2014,6 @@ namespace LimbusInjector
             GUILayout.EndHorizontal();
             GUILayout.Space(1);
 
-            // [CHANGED] Category row 1: All/Sys: 34→40, C1~C5: 30→36
             GUILayout.BeginHorizontal();
             for (int i = 0; i <= 6; i++)
             {
@@ -1980,7 +2024,6 @@ namespace LimbusInjector
             }
             GUILayout.EndHorizontal();
 
-            // [CHANGED] Category row 2: C6~C9: 30→36, MD/EGO: 38→44, Shin: 36→42, Boss: 46→54
             GUILayout.BeginHorizontal();
             for (int i = 7; i < _catLabels.Length; i++)
             {
@@ -1992,7 +2035,6 @@ namespace LimbusInjector
             GUILayout.EndHorizontal();
             GUILayout.Space(2);
 
-            // [CHANGED] Search field: 280 → 360
             GUILayout.BeginHorizontal();
             GUILayout.Label("Search:", GUILayout.Width(50));
             string ns = GUILayout.TextField(_buffSearch, GUILayout.Width(360));
@@ -2001,7 +2043,6 @@ namespace LimbusInjector
             GUILayout.EndHorizontal();
             GUILayout.Space(2);
 
-            // Filter
             string q = _buffSearch.Trim().ToLowerInvariant();
             string catKey = _catKeys[_buffCatIdx];
             var filtered = new List<(string id, string en, string buffType, string buffClass, string cat)>();
@@ -2022,7 +2063,6 @@ namespace LimbusInjector
             GUILayout.Label($"Results: {filtered.Count}");
             GUILayout.Space(2);
 
-            // [CHANGED] List columns: cat 34→42, en 180→210, id 200→240, button 28→32
             int start = _buffPage * PAGE_SIZE;
             int end   = Math.Min(start + PAGE_SIZE, filtered.Count);
             for (int i = start; i < end; i++)
@@ -2042,15 +2082,9 @@ namespace LimbusInjector
         // ── Ability Tab ──────────────────────────────────────────────────
         private void DrawAbilityTab()
         {
-            GUILayout.BeginHorizontal();
-            GUILayout.Label("Stack:", GUILayout.Width(45));
-            _stackInput = GUILayout.TextField(_stackInput, GUILayout.Width(50));
-            GUILayout.Label("Turn:", GUILayout.Width(42));
-            _turnInput  = GUILayout.TextField(_turnInput,  GUILayout.Width(50));
-            GUILayout.EndHorizontal();
+            DrawParamRow();  // [CHANGED] 공통 파라미터 행
             GUILayout.Space(2);
 
-            // [CHANGED] Search field: 280 → 360
             GUILayout.BeginHorizontal();
             GUILayout.Label("Search:", GUILayout.Width(50));
             string ns = GUILayout.TextField(_abilitySearch, GUILayout.Width(360));
@@ -2068,7 +2102,6 @@ namespace LimbusInjector
             GUILayout.Label($"Results: {filtered.Count}");
             GUILayout.Space(2);
 
-            // [CHANGED] List columns: desc 280→320, id 200→260, button 28→32
             int start = _abilityPage * PAGE_SIZE;
             int end   = Math.Min(start + PAGE_SIZE, filtered.Count);
             for (int i = start; i < end; i++)
@@ -2089,11 +2122,241 @@ namespace LimbusInjector
         {
             int totalPages = Math.Max(1, (total + PAGE_SIZE - 1) / PAGE_SIZE);
             GUILayout.BeginHorizontal();
-            // [CHANGED] Nav buttons: 35→42, label: 65→72
             if (GUILayout.Button("<", GUILayout.Width(42)) && page > 0) page--;
             GUILayout.Label($"{page + 1} / {totalPages}", GUILayout.Width(72));
             if (GUILayout.Button(">", GUILayout.Width(42)) && page < totalPages - 1) page++;
             GUILayout.EndHorizontal();
+        }
+
+        // ── [NEW] 지속 버프 목록 표시 ────────────────────────────────────
+        private void DrawPersistList()
+        {
+            if (_persistList.Count == 0) return;
+
+            GUILayout.Label($"── Active Persistent Buffs [{_persistList.Count}] ──");
+            _persistScroll = GUILayout.BeginScrollView(_persistScroll, GUILayout.Height(72));
+            for (int i = _persistList.Count - 1; i >= 0; i--)
+            {
+                var pe = _persistList[i];
+                GUILayout.BeginHorizontal();
+                string tag = pe.isBuff ? "B" : "A";
+                GUILayout.Label($"[{tag}] {pe.buffId}  x{pe.stack}/{pe.turn}t  残{pe.remainTurns}R", GUILayout.Width(480));
+                if (GUILayout.Button("X", GUILayout.Width(28)))
+                { _persistList.RemoveAt(i); GUILayout.EndHorizontal(); break; }
+                GUILayout.EndHorizontal();
+            }
+            GUILayout.EndScrollView();
+
+            GUILayout.BeginHorizontal();
+            if (GUILayout.Button("Tick Now", GUILayout.Width(80)))
+                TickPersistentBuffs();
+            if (GUILayout.Button("Clear All", GUILayout.Width(80)))
+                _persistList.Clear();
+            if (GUILayout.Button("Dump BOM", GUILayout.Width(80)))
+                DumpBomIntMembers();
+            // Harmony 패치 동작 여부 표시 (라운드 시작마다 자동 갱신)
+            GUILayout.Label("[Auto] StageController.StartRound hook active");
+            GUILayout.EndHorizontal();
+        }
+
+        // ── [NEW] 현재 라운드 번호 조회 (리플렉션) ──────────────────────
+        /// <summary>
+        /// BattleObjectManager 에서 현재 라운드 번호를 반사적으로 조회합니다.
+        /// 해당 프로퍼티/필드명이 패치로 변경된 경우 -1을 반환합니다.
+        /// </summary>
+        // 라운드 프로퍼티명 캐시 (한 번 찾으면 재스캔 생략)
+        private string? _cachedRoundMemberName = null;
+        private bool    _cachedRoundIsProp     = true;
+
+        private int GetCurrentRound()
+        {
+            var bom = FindObjectOfType<BattleObjectManager>();
+            if (bom == null) return -1;
+
+            var flags = BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance;
+            var type  = bom.GetType();
+
+            // ── 캐시 히트 ─────────────────────────────────────────────
+            if (_cachedRoundMemberName != null)
+            {
+                try
+                {
+                    if (_cachedRoundIsProp)
+                    {
+                        var p = type.GetProperty(_cachedRoundMemberName, flags);
+                        if (p != null) return (int)p.GetValue(bom)!;
+                    }
+                    else
+                    {
+                        var f = type.GetField(_cachedRoundMemberName, flags);
+                        if (f != null) return (int)f.GetValue(bom)!;
+                    }
+                }
+                catch { _cachedRoundMemberName = null; }
+            }
+
+            // ── 우선순위 1: 고정 후보명 ───────────────────────────────
+            foreach (var name in new[]
+            {
+                "CurrentRound","currentRound","CurrentTurn","currentTurn",
+                "RoundCount","roundCount","Round","_round","_currentRound",
+                "TurnCount","turnCount","WaveCount","waveCount","_turn","_turnCount"
+            })
+            {
+                var prop = type.GetProperty(name, flags);
+                if (prop != null && prop.PropertyType == typeof(int))
+                    try
+                    {
+                        int v = (int)prop.GetValue(bom)!;
+                        if (v >= 0) { _cachedRoundMemberName = name; _cachedRoundIsProp = true; return v; }
+                    } catch { }
+
+                var field = type.GetField(name, flags);
+                if (field != null && field.FieldType == typeof(int))
+                    try
+                    {
+                        int v = (int)field.GetValue(bom)!;
+                        if (v >= 0) { _cachedRoundMemberName = name; _cachedRoundIsProp = false; return v; }
+                    } catch { }
+            }
+
+            // ── 우선순위 2: "round/turn/wave" 포함 이름 전체 스캔 ─────
+            string[] kws = { "round", "turn", "wave" };
+            foreach (var prop in type.GetProperties(flags))
+            {
+                if (prop.PropertyType != typeof(int) || !prop.CanRead) continue;
+                string n = prop.Name.ToLowerInvariant();
+                if (System.Array.Exists(kws, k => n.Contains(k)))
+                    try
+                    {
+                        int v = (int)prop.GetValue(bom)!;
+                        if (v > 0) { _cachedRoundMemberName = prop.Name; _cachedRoundIsProp = true; return v; }
+                    } catch { }
+            }
+            foreach (var field in type.GetFields(flags))
+            {
+                if (field.FieldType != typeof(int)) continue;
+                string n = field.Name.ToLowerInvariant();
+                if (System.Array.Exists(kws, k => n.Contains(k)))
+                    try
+                    {
+                        int v = (int)field.GetValue(bom)!;
+                        if (v > 0) { _cachedRoundMemberName = field.Name; _cachedRoundIsProp = false; return v; }
+                    } catch { }
+            }
+            return -1;
+        }
+
+        /// <summary>
+        /// BattleObjectManager의 모든 int 멤버 이름+현재값을 BepInEx 로그에 출력합니다.
+        /// GetCurrentRound()가 -1을 반환할 때 실제 프로퍼티명 파악에 사용합니다.
+        /// </summary>
+        private void DumpBomIntMembers()
+        {
+            var bom = FindObjectOfType<BattleObjectManager>();
+            if (bom == null) { _status = "[Dump] BOM not found"; return; }
+
+            var flags = BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance;
+            var type  = bom.GetType();
+            var sb    = new System.Text.StringBuilder("[Dump] BOM int members:\n");
+            foreach (var p in type.GetProperties(flags))
+            {
+                if (p.PropertyType != typeof(int) || !p.CanRead) continue;
+                try { sb.AppendLine($"  PROP  {p.Name} = {p.GetValue(bom)}"); } catch { }
+            }
+            foreach (var f in type.GetFields(flags))
+            {
+                if (f.FieldType != typeof(int)) continue;
+                try { sb.AppendLine($"  FIELD {f.Name} = {f.GetValue(bom)}"); } catch { }
+            }
+            LimbusInjectorPlugin.Log?.LogInfo(sb.ToString());
+            _status = "[Dump] BOM int members → BepInEx 콘솔 확인";
+        }
+
+        // ── [NEW] 지속 버프 틱 ──────────────────────────────────────────
+        /// <summary>
+        /// 라운드가 바뀔 때마다 호출되어 지속 버프를 재부여하고 카운터를 감소시킵니다.
+        /// </summary>
+        private void TickPersistentBuffs()
+        {
+            if (_persistList.Count == 0) return;
+
+            LimbusInjectorPlugin.Log?.LogInfo($"[PersistTick] Round changed → ticking {_persistList.Count} entries");
+
+            for (int i = _persistList.Count - 1; i >= 0; i--)
+            {
+                var pe = _persistList[i];
+                ApplyPersistEntry(pe);
+
+                pe.remainTurns--;
+                if (pe.remainTurns <= 0)
+                {
+                    LimbusInjectorPlugin.Log?.LogInfo($"[PersistTick] Expired: {pe.buffId}");
+                    _persistList.RemoveAt(i);
+                }
+                else
+                {
+                    _persistList[i] = pe;
+                }
+            }
+        }
+
+        // ── [NEW] PersistEntry 실제 적용 ────────────────────────────────
+        /// <summary>
+        /// BattleObjectManager 에서 유닛을 새로 조회하여 지속 버프/어빌리티를 부여합니다.
+        /// (유닛 오브젝트가 라운드 사이에 교체될 수 있으므로 InstanceID로 재식별)
+        /// </summary>
+        private void ApplyPersistEntry(PersistEntry pe)
+        {
+            var bom = FindObjectOfType<BattleObjectManager>();
+            if (bom == null) return;
+
+            var listMethod = typeof(BattleObjectManager).GetMethod("GetModelList",
+                new System.Type[]{ typeof(UNIT_FACTION), typeof(bool) });
+            if (listMethod == null) return;
+
+            var result    = listMethod.Invoke(bom, new object[]{ pe.faction, false })!;
+            var countProp = result.GetType().GetProperty("Count")!;
+            var indexer   = result.GetType().GetProperty("Item")!;
+            int count     = (int)countProp.GetValue(result)!;
+
+            for (int i = 0; i < count; i++)
+            {
+                var unit = indexer.GetValue(result, new object[]{ i })!;
+
+                var wasProp = unit.GetType().GetProperty("WasCollected");
+                if (wasProp != null && (bool)wasProp.GetValue(unit)!) continue;
+
+                var idProp = unit.GetType().GetProperty("InstanceID");
+                if (idProp == null) continue;
+                int instanceID = (int)idProp.GetValue(unit)!;
+
+                if (!pe.instanceIDs.Contains(instanceID)) continue;
+
+                try
+                {
+                    if (pe.isBuff)
+                    {
+                        if (!Enum.TryParse(typeof(BUFF_UNIQUE_KEYWORD), pe.buffId, out var boxed)) continue;
+                        var buffMethod = unit.GetType().GetMethod("AddBuff_NonGiver");
+                        object addedStack = 0, addedTurn = 0, overStack = 0, overTurn = 0;
+                        var args = new object?[]{ boxed, pe.stack, pe.turn, 0,
+                            (ABILITY_SOURCE_TYPE)0, (BATTLE_EVENT_TIMING)0, null,
+                            addedStack, addedTurn, overStack, overTurn };
+                        buffMethod!.Invoke(unit, args);
+                    }
+                    else
+                    {
+                        if (!Enum.TryParse(typeof(SYSTEM_ABILITY_KEYWORD), pe.buffId, out var boxed)) continue;
+                        var addMethod = unit.GetType().GetMethod("AddAbilityThisRound")!;
+                        addMethod.Invoke(unit, new object[]{ boxed, pe.stack, pe.turn });
+                    }
+                }
+                catch (Exception ex)
+                {
+                    LimbusInjectorPlugin.Log?.LogError($"[PersistApply] {pe.buffId} → ID:{instanceID} | {ex}");
+                }
+            }
         }
 
         // ── Inject ───────────────────────────────────────────────────────
@@ -2105,8 +2368,9 @@ namespace LimbusInjector
             if (!Enum.TryParse(typeof(BUFF_UNIQUE_KEYWORD), keywordName, out var boxed))
             { _status = $"[Error] Unknown keyword: {keywordName}"; return; }
 
-            if (!int.TryParse(_stackInput, out int stack) || stack <= 0) stack = 1;
-            if (!int.TryParse(_turnInput,  out int turn)  || turn  <= 0) turn  = 3;
+            if (!int.TryParse(_stackInput,   out int stack)   || stack   <= 0) stack   = 1;
+            if (!int.TryParse(_turnInput,    out int turn)    || turn    <= 0) turn    = 3;
+            if (!int.TryParse(_persistInput, out int persist) || persist < 0)  persist = 0;
 
             int successCount = 0;
             var failList = new List<string>();
@@ -2134,7 +2398,25 @@ namespace LimbusInjector
                 }
             }
 
-            _status = $"[Buff] {keywordName} x{stack}/{turn}t -> {successCount}/{_selectedUnits.Count} units";
+            // [NEW] persist > 0 이면 지속 목록에 등록
+            if (persist > 0 && successCount > 0)
+            {
+                _persistList.Add(new PersistEntry
+                {
+                    buffId      = keywordName,
+                    isBuff      = true,
+                    stack       = stack,
+                    turn        = turn,
+                    remainTurns = persist,
+                    faction     = _faction,
+                    instanceIDs = new HashSet<int>(_selectedUnits.Keys)
+                });
+                LimbusInjectorPlugin.Log?.LogInfo($"[Persist+] {keywordName} persist={persist}R registered");
+            }
+
+            _status = persist > 0
+                ? $"[Buff+Persist] {keywordName} x{stack}/{turn}t ×{persist}R → {successCount}/{_selectedUnits.Count}"
+                : $"[Buff] {keywordName} x{stack}/{turn}t → {successCount}/{_selectedUnits.Count}";
             if (failList.Count > 0) _status += $" | Failed: {string.Join(", ", failList)}";
             LimbusInjectorPlugin.Log?.LogInfo(_status);
         }
@@ -2147,8 +2429,9 @@ namespace LimbusInjector
             if (!Enum.TryParse(typeof(SYSTEM_ABILITY_KEYWORD), abilityId, out var boxed))
             { _status = $"[Error] Unknown keyword: {abilityId}"; return; }
 
-            if (!int.TryParse(_stackInput, out int stack) || stack <= 0) stack = 1;
-            if (!int.TryParse(_turnInput,  out int turn)  || turn  <= 0) turn  = 3;
+            if (!int.TryParse(_stackInput,   out int stack)   || stack   <= 0) stack   = 1;
+            if (!int.TryParse(_turnInput,    out int turn)    || turn    <= 0) turn    = 3;
+            if (!int.TryParse(_persistInput, out int persist) || persist < 0)  persist = 0;
 
             int successCount = 0;
             foreach (var kvp in _selectedUnits)
@@ -2164,7 +2447,25 @@ namespace LimbusInjector
                 }
                 catch (Exception ex) { LimbusInjectorPlugin.Log?.LogError(ex.ToString()); }
             }
-            _status = $"[Ability] {abilityId} x{stack}/{turn}t -> {successCount}/{_selectedUnits.Count} units";
+
+            // [NEW] persist > 0 이면 지속 목록에 등록
+            if (persist > 0 && successCount > 0)
+            {
+                _persistList.Add(new PersistEntry
+                {
+                    buffId      = abilityId,
+                    isBuff      = false,
+                    stack       = stack,
+                    turn        = turn,
+                    remainTurns = persist,
+                    faction     = _faction,
+                    instanceIDs = new HashSet<int>(_selectedUnits.Keys)
+                });
+            }
+
+            _status = persist > 0
+                ? $"[Abil+Persist] {abilityId} x{stack}/{turn}t ×{persist}R → {successCount}/{_selectedUnits.Count}"
+                : $"[Ability] {abilityId} x{stack}/{turn}t → {successCount}/{_selectedUnits.Count}";
             LimbusInjectorPlugin.Log?.LogInfo(_status);
         }
     }
